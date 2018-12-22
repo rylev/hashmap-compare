@@ -3,19 +3,21 @@ use std::collections::hash_map::DefaultHasher;
 fn main() {}
 
 struct Basic<K: Hash + Eq, V>  {
-  buckets: Vec<Vec<(K, V)>>
+  buckets: Vec<Vec<(K, V)>>,
+  bucket_count: usize,
 }
 
-const BUCKET_COUNT: usize = 4;
+const INITIAL_BUCKET_COUNT: usize = 4;
 
 impl <K: Hash+ Eq, V> Basic<K, V> {
   fn new() -> Basic<K, V> {
-    let mut buckets = Vec::with_capacity(BUCKET_COUNT);
-    for _ in 0..BUCKET_COUNT {
+    let mut buckets = Vec::with_capacity(INITIAL_BUCKET_COUNT);
+    for _ in 0..INITIAL_BUCKET_COUNT {
       buckets.push(Vec::new());
     }
     Basic {
-      buckets
+      buckets,
+      bucket_count: INITIAL_BUCKET_COUNT
     }
   }
 
@@ -23,20 +25,22 @@ impl <K: Hash+ Eq, V> Basic<K, V> {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
     let hash = hasher.finish();
-    let bucket_index = (hash % BUCKET_COUNT as u64) as usize;
+    let bucket_index = (hash % self.bucket_count as u64) as usize;
     let bucket = self.buckets.get_mut(bucket_index).unwrap();
-    bucket.push((key, value));
+    if let Some(i) = bucket.iter_mut().find(|(k, _)| k == &key) {
+      *i = (key, value);
+    } else {
+      bucket.push((key, value));
+    }
   }
 
   fn get(&self, key: K) -> Option<&V> {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
     let hash = hasher.finish();
-    let bucket_index = (hash % BUCKET_COUNT as u64) as usize;
+    let bucket_index = (hash % self.bucket_count as u64) as usize;
     let bucket = self.buckets.get(bucket_index)?;
-    bucket.iter().find(|(k, _)| {
-      &key == k
-    }).map(|(_, v)| v)
+    bucket.iter().find(|(k, _)| &key == k).map(|(_, v)| v)
   }
 }
 
@@ -49,9 +53,10 @@ mod tests {
       let mut basic = Basic::new();
       basic.insert("dude", "wow");
       basic.insert("foo", "bar");
+      basic.insert("foo", "lol");
 
       assert_eq!(basic.get("dude"), Some(&"wow"));
-      assert_eq!(basic.get("foo"), Some(&"bar"));
+      assert_eq!(basic.get("foo"), Some(&"lol"));
       assert_eq!(basic.get("qux"), None);
     }
 }
