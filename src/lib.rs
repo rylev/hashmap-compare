@@ -1,8 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-fn main() {}
 
-struct Basic<K: Hash + Eq, V> {
+pub struct Basic<K: Hash + Eq, V> {
   buckets: Vec<Vec<(K, V)>>,
   bucket_count: usize,
   item_count: usize,
@@ -13,7 +12,7 @@ struct Basic<K: Hash + Eq, V> {
 const INITIAL_BUCKET_COUNT: usize = 4;
 
 impl<K: Hash + Eq, V> Basic<K, V> {
-  fn new() -> Basic<K, V> {
+  pub fn new() -> Basic<K, V> {
     let mut buckets = Vec::with_capacity(INITIAL_BUCKET_COUNT);
     for _ in 0..INITIAL_BUCKET_COUNT {
       buckets.push(Vec::new());
@@ -27,7 +26,7 @@ impl<K: Hash + Eq, V> Basic<K, V> {
     }
   }
 
-  fn insert(&mut self, key: K, value: V) {
+  pub fn insert(&mut self, key: K, value: V) {
     let load_factor = self.item_count as f64 / self.bucket_count as f64;
     if self.should_resize && load_factor >= self.max_load_factor {
       self.resize();
@@ -42,12 +41,12 @@ impl<K: Hash + Eq, V> Basic<K, V> {
     }
   }
 
-  fn get(&self, key: K) -> Option<&V> {
+  pub fn get(&self, key: K) -> Option<&V> {
     let bucket = self.buckets.get(self.bucket_index(&key))?;
     bucket.iter().find(|(k, _)| &key == k).map(|(_, v)| v)
   }
 
-  fn remove(&mut self, key: &K) -> Option<V> {
+  pub fn remove(&mut self, key: &K) -> Option<V> {
     let bucket_index = self.bucket_index(&key);
     let bucket = self.buckets.get_mut(bucket_index)?;
     let pos = bucket.iter().position(|(k, _)| k == key)?;
@@ -80,7 +79,7 @@ impl<K: Hash + Eq, V> Basic<K, V> {
   }
 }
 
-struct Advanced<K: Hash + Eq, V> {
+pub struct Advanced<K: Hash + Eq, V> {
   slots: Vec<Option<((K, V), usize)>>,
   slot_count: usize,
   item_count: usize,
@@ -89,7 +88,7 @@ struct Advanced<K: Hash + Eq, V> {
 }
 
 impl<K: Hash + Eq, V> Advanced<K, V> {
-  fn new() -> Advanced<K, V> {
+  pub fn new() -> Advanced<K, V> {
     let mut slots = Vec::with_capacity(INITIAL_BUCKET_COUNT);
     for _ in 0..INITIAL_BUCKET_COUNT {
       slots.push(None);
@@ -103,7 +102,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     }
   }
 
-  fn insert(&mut self, key: K, value: V) {
+  pub fn insert(&mut self, key: K, value: V) {
     let load_factor = self.item_count as f64 / self.slot_count as f64;
     if self.should_resize && load_factor >= self.max_load_factor {
       self.resize();
@@ -124,7 +123,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     *slot = Some(((key, value), slot_index));
   }
 
-  fn get(&self, key: K) -> Option<&V> {
+  pub fn get(&self, key: K) -> Option<&V> {
     let iter = self.slots.iter().skip(self.slot_index(&key));
     for item in iter {
       match item {
