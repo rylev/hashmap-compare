@@ -47,6 +47,14 @@ impl<K: Hash + Eq, V> Basic<K, V> {
     bucket.iter().find(|(k, _)| &key == k).map(|(_, v)| v)
   }
 
+  fn remove(&mut self, key: &K) -> Option<V> {
+    let bucket_index = self.bucket_index(&key);
+    let bucket = self.buckets.get_mut(bucket_index)?;
+    let pos = bucket.iter().position(|(k, _)| k == key)?;
+    let (_, v) = bucket.swap_remove(pos);
+    Some(v)
+  }
+
   fn resize(&mut self) {
     self.bucket_count = self.bucket_count * 2;
     let mut new_buckets = Vec::with_capacity(self.bucket_count);
@@ -96,10 +104,10 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
   }
 
   fn insert(&mut self, key: K, value: V) {
-    // let load_factor = self.item_count as f64 / self.slot_count as f64;
-    // if self.should_resize && load_factor >= self.max_load_factor {
-    //   self.resize();
-    // }
+    let load_factor = self.item_count as f64 / self.slot_count as f64;
+    if self.should_resize && load_factor >= self.max_load_factor {
+      self.resize();
+    }
     let slot_index = self.slot_index(&key);
     let slot = self
       .slots
@@ -110,7 +118,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
         None => true,
       })
       .unwrap();
-    if (slot.is_none()) {
+    if slot.is_none() {
       self.item_count += 1;
     }
     *slot = Some(((key, value), slot_index));
@@ -165,7 +173,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn basic_can_insert_and_get() {
+  fn basic_works() {
     let mut basic = Basic::new();
     basic.insert("dude", "wow");
     basic.insert("foo", "bar");
@@ -173,11 +181,15 @@ mod tests {
 
     assert_eq!(basic.get("dude"), Some(&"wow"));
     assert_eq!(basic.get("foo"), Some(&"lol"));
+    assert_eq!(basic.get("foo"), Some(&"lol"));
+    let removed = basic.remove(&"foo");
+    assert_eq!(basic.get("foo"), None);
+    assert_eq!(removed, Some("lol"));
     assert_eq!(basic.get("qux"), None);
   }
 
   #[test]
-  fn advanced_can_insert_and_get() {
+  fn advanced_works() {
     let mut advanced = Advanced::new();
     advanced.insert("dude", "wow");
     advanced.insert("foo", "bar");
