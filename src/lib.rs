@@ -135,6 +135,20 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     None
   }
 
+  pub fn remove(&mut self, key: &K) -> Option<V> {
+    let iter = self.slots.iter().enumerate().skip(self.slot_index(&key));
+    let mut index = None;
+    for (i, item) in iter {
+      match item {
+        Some(((k, _), _)) if k == key => index = Some(i),
+        None => return None,
+        _ => {}
+      }
+    }
+    let ((_, v), _) = self.slots.remove(index?).unwrap();
+    Some(v)
+  }
+
   fn resize(&mut self) {
     self.slot_count = self.slot_count * 2;
     let mut new_slots = Vec::with_capacity(self.slot_count);
@@ -148,7 +162,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
         let slot = self
           .slots
           .iter_mut()
-          .skip(slot_index - 1)
+          .skip(slot_index)
           .find(|item| match item {
             Some(((k, _), _)) => k == &key,
             None => true,
@@ -196,6 +210,11 @@ mod tests {
 
     assert_eq!(advanced.get("dude"), Some(&"wow"));
     assert_eq!(advanced.get("foo"), Some(&"lol"));
+    assert_eq!(advanced.get("foo"), Some(&"lol"));
+
+    let removed = advanced.remove(&"foo");
+    assert_eq!(advanced.get("foo"), None);
+    assert_eq!(removed, Some("lol"));
     assert_eq!(advanced.get("qux"), None);
   }
 }
