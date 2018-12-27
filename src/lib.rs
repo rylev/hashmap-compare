@@ -1,8 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+type Bucket<K, V> = Vec<(K, V)>;
 pub struct Basic<K: Hash + Eq, V> {
-  buckets: Vec<Vec<(K, V)>>,
+  buckets: Vec<Bucket<K, V>>,
   bucket_count: usize,
   item_count: usize,
   max_load_factor: f64,
@@ -13,12 +14,8 @@ const INITIAL_BUCKET_COUNT: usize = 4;
 
 impl<K: Hash + Eq, V> Basic<K, V> {
   pub fn new() -> Basic<K, V> {
-    let mut buckets = Vec::with_capacity(INITIAL_BUCKET_COUNT);
-    for _ in 0..INITIAL_BUCKET_COUNT {
-      buckets.push(Vec::new());
-    }
     Basic {
-      buckets,
+      buckets: Self::create_buckets(INITIAL_BUCKET_COUNT),
       bucket_count: INITIAL_BUCKET_COUNT,
       item_count: 0,
       max_load_factor: 0.6,
@@ -41,9 +38,9 @@ impl<K: Hash + Eq, V> Basic<K, V> {
     }
   }
 
-  pub fn get(&self, key: K) -> Option<&V> {
+  pub fn get(&self, key: &K) -> Option<&V> {
     let bucket = self.buckets.get(self.bucket_index(&key))?;
-    bucket.iter().find(|(k, _)| &key == k).map(|(_, v)| v)
+    bucket.iter().find(|(k, _)| key == k).map(|(_, v)| v)
   }
 
   pub fn remove(&mut self, key: &K) -> Option<V> {
@@ -56,11 +53,7 @@ impl<K: Hash + Eq, V> Basic<K, V> {
 
   fn resize(&mut self) {
     self.bucket_count = self.bucket_count * 2;
-    let mut new_buckets = Vec::with_capacity(self.bucket_count);
-    for _ in 0..self.bucket_count {
-      new_buckets.push(Vec::new());
-    }
-
+    let new_buckets = Self::create_buckets(self.bucket_count);
     let old_buckets = std::mem::replace(&mut self.buckets, new_buckets);
     for bucket in old_buckets.into_iter() {
       for (key, value) in bucket.into_iter() {
@@ -77,10 +70,19 @@ impl<K: Hash + Eq, V> Basic<K, V> {
     let hash = hasher.finish();
     (hash % self.bucket_count as u64) as usize
   }
+
+  fn create_buckets(bucket_count: usize) -> Vec<Bucket<K, V>> {
+    let mut buckets = Vec::with_capacity(bucket_count);
+    for _ in 0..bucket_count {
+      buckets.push(Vec::new());
+    }
+    buckets
+  }
 }
 
+type Slot<K, V> = Option<((K, V), usize)>;
 pub struct Advanced<K: Hash + Eq, V> {
-  slots: Vec<Option<((K, V), usize)>>,
+  slots: Vec<Slot<K, V>>,
   slot_count: usize,
   item_count: usize,
   max_load_factor: f64,
@@ -89,12 +91,8 @@ pub struct Advanced<K: Hash + Eq, V> {
 
 impl<K: Hash + Eq, V> Advanced<K, V> {
   pub fn new() -> Advanced<K, V> {
-    let mut slots = Vec::with_capacity(INITIAL_BUCKET_COUNT);
-    for _ in 0..INITIAL_BUCKET_COUNT {
-      slots.push(None);
-    }
     Advanced {
-      slots,
+      slots: Self::create_slots(INITIAL_BUCKET_COUNT),
       slot_count: INITIAL_BUCKET_COUNT,
       item_count: 0,
       max_load_factor: 0.6,
@@ -108,69 +106,59 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
       self.resize();
     }
     let slot_index = self.slot_index(&key);
-    let slot = self
-      .slots
-      .iter_mut()
-      .skip(slot_index)
-      .find(|item| match item {
-        Some(((k, _), _)) => k == &key,
-        None => true,
-      })
-      .unwrap();
-    if slot.is_none() {
+    let slot = self.slot_mut(slot_index, &key).unwrap();
+    let old = slot.replace(((key, value), slot_index));
+
+    if old.is_none() {
       self.item_count += 1;
     }
-    *slot = Some(((key, value), slot_index));
   }
 
-  pub fn get(&self, key: K) -> Option<&V> {
-    let iter = self.slots.iter().skip(self.slot_index(&key));
-    for item in iter {
-      match item {
-        Some(((k, v), _)) if k == &key => return Some(v),
-        None => return None,
-        _ => {}
-      }
+  pub fn get(&self, key: &K) -> Option<&V> {
+    let slot_index = self.slot_index(key);
+    let slot = self.slot(slot_index, key)?;
+    match slot {
+      Some(((_, ref v), _)) => Some(v),
+      None => None,
     }
-    None
   }
 
   pub fn remove(&mut self, key: &K) -> Option<V> {
-    let iter = self.slots.iter().enumerate().skip(self.slot_index(&key));
-    let mut index = None;
-    for (i, item) in iter {
-      match item {
-        Some(((k, _), _)) if k == key => index = Some(i),
-        None => return None,
-        _ => {}
-      }
-    }
-    let ((_, v), _) = self.slots.remove(index?).unwrap();
+    let slot_index = self.slot_index(&key);
+    let slot = self.slot_mut(slot_index, key)?;
+    let ((_, v), _) = slot.take()?;
     Some(v)
   }
 
   fn resize(&mut self) {
     self.slot_count = self.slot_count * 2;
-    let mut new_slots = Vec::with_capacity(self.slot_count);
-    for _ in 0..self.slot_count {
-      new_slots.push(None);
-    }
+    let new_slots = Self::create_slots(self.slot_count);
 
     let old_slots = std::mem::replace(&mut self.slots, new_slots);
-    for slot in old_slots.into_iter() {
-      if let Some(((key, value), slot_index)) = slot {
-        let slot = self
-          .slots
-          .iter_mut()
-          .skip(slot_index)
-          .find(|item| match item {
-            Some(((k, _), _)) => k == &key,
-            None => true,
-          })
-          .unwrap();
+    for old_slot in old_slots.into_iter() {
+      if let Some(((key, value), slot_index)) = old_slot {
+        let slot = self.slot_mut(slot_index, &key).unwrap();
         *slot = Some(((key, value), slot_index));
       }
     }
+  }
+
+  fn slot_mut(&mut self, slot_index: usize, key: &K) -> Option<&mut Slot<K, V>> {
+    self
+      .slots
+      .iter_mut()
+      .skip(slot_index)
+      .find(|item| match item {
+        Some(((k, _), _)) => k == key,
+        None => true,
+      })
+  }
+
+  fn slot(&self, slot_index: usize, key: &K) -> Option<&Slot<K, V>> {
+    self.slots.iter().skip(slot_index).find(|item| match item {
+      Some(((k, _), _)) => k == key,
+      None => true,
+    })
   }
 
   fn slot_index(&self, key: &K) -> usize {
@@ -178,6 +166,14 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     key.hash(&mut hasher);
     let hash = hasher.finish();
     (hash % self.slot_count as u64) as usize
+  }
+
+  fn create_slots(slot_count: usize) -> Vec<Slot<K, V>> {
+    let mut new_slots = Vec::with_capacity(slot_count);
+    for _ in 0..slot_count {
+      new_slots.push(None);
+    }
+    new_slots
   }
 }
 
@@ -192,13 +188,13 @@ mod tests {
     basic.insert("foo", "bar");
     basic.insert("foo", "lol");
 
-    assert_eq!(basic.get("dude"), Some(&"wow"));
-    assert_eq!(basic.get("foo"), Some(&"lol"));
-    assert_eq!(basic.get("foo"), Some(&"lol"));
+    assert_eq!(basic.get(&"dude"), Some(&"wow"));
+    assert_eq!(basic.get(&"foo"), Some(&"lol"));
+    assert_eq!(basic.get(&"foo"), Some(&"lol"));
     let removed = basic.remove(&"foo");
-    assert_eq!(basic.get("foo"), None);
+    assert_eq!(basic.get(&"foo"), None);
     assert_eq!(removed, Some("lol"));
-    assert_eq!(basic.get("qux"), None);
+    assert_eq!(basic.get(&"qux"), None);
   }
 
   #[test]
@@ -208,13 +204,13 @@ mod tests {
     advanced.insert("foo", "bar");
     advanced.insert("foo", "lol");
 
-    assert_eq!(advanced.get("dude"), Some(&"wow"));
-    assert_eq!(advanced.get("foo"), Some(&"lol"));
-    assert_eq!(advanced.get("foo"), Some(&"lol"));
+    assert_eq!(advanced.get(&"dude"), Some(&"wow"));
+    assert_eq!(advanced.get(&"foo"), Some(&"lol"));
+    assert_eq!(advanced.get(&"foo"), Some(&"lol"));
 
     let removed = advanced.remove(&"foo");
-    assert_eq!(advanced.get("foo"), None);
+    assert_eq!(advanced.get(&"foo"), None);
     assert_eq!(removed, Some("lol"));
-    assert_eq!(advanced.get("qux"), None);
+    assert_eq!(advanced.get(&"qux"), None);
   }
 }
