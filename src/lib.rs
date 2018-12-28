@@ -1,3 +1,5 @@
+#![cfg_attr(test, feature(test))]
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -10,7 +12,7 @@ pub struct Basic<K: Hash + Eq, V> {
   should_resize: bool,
 }
 
-const INITIAL_BUCKET_COUNT: usize = 4;
+const INITIAL_BUCKET_COUNT: usize = 16;
 
 impl<K: Hash + Eq, V> Basic<K, V> {
   pub fn new() -> Basic<K, V> {
@@ -95,7 +97,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
       slots: Self::create_slots(INITIAL_BUCKET_COUNT),
       slot_count: INITIAL_BUCKET_COUNT,
       item_count: 0,
-      max_load_factor: 0.6,
+      max_load_factor: 0.9,
       should_resize: true,
     }
   }
@@ -107,43 +109,71 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     }
     let new_slot_index = self.slot_index(&key);
     if cfg!(not(feature = "robin")) {
-      let slot = self.slot_mut(new_slot_index, &key).unwrap();
-      let old = slot.replace(((key, value), new_slot_index));
+      let slot = self.slot_mut(new_slot_index, &key);
+      match slot {
+        Some(slot) => {
+          let old = slot.replace(((key, value), new_slot_index));
 
-      if old.is_none() {
-        self.item_count += 1;
+          if old.is_none() {
+            self.item_count += 1;
+          }
+        }
+        None => {
+          self.slots.push(Some(((key, value), new_slot_index)));
+        }
       }
     } else {
-      let mut current_slot = ((key, value), new_slot_index);
+      let mut slot_to_be_inserted = ((key, value), new_slot_index);
       for (i, slot) in self.slots.iter_mut().enumerate().skip(new_slot_index) {
         match slot {
-          Some(((k, _), slot_index)) => {
-            let current_distance = i - *slot_index;
-            let new_distance = i - current_slot.1;
-            let current_key = &(current_slot.0).0;
-            if current_key == k {
-              *slot = Some(current_slot);
+          Some(((current_slot_key, _), current_slot_index)) => {
+            let actual_distance = i - *current_slot_index;
+            let query_distance = i - slot_to_be_inserted.1;
+            let key_to_insert = &(slot_to_be_inserted.0).0;
+            if key_to_insert == current_slot_key {
+              slot.replace(slot_to_be_inserted);
               return;
-            } else if current_distance < new_distance {
-              current_slot = slot.replace(current_slot).unwrap();
+            } else if actual_distance < query_distance {
+              slot_to_be_inserted = slot.replace(slot_to_be_inserted).unwrap();
             }
           }
           None => {
-            slot.replace(current_slot);
+            self.item_count += 1;
+            slot.replace(slot_to_be_inserted);
             return;
           }
         }
       }
-      self.slots.push(Some(current_slot));
+      self.item_count += 1;
+
+      self.slots.push(Some(slot_to_be_inserted));
     }
   }
 
   pub fn get(&self, key: &K) -> Option<&V> {
     let slot_index = self.slot_index(key);
-    let slot = self.slot(slot_index, key)?;
-    match slot {
-      Some(((_, ref v), _)) => Some(v),
-      None => None,
+    if cfg!(feature = "robin") {
+      for (i, slot) in self.slots.iter().enumerate().skip(slot_index) {
+        match slot {
+          Some(((current_slot_key, value), current_slot_index)) => {
+            let actual_distance = i - *current_slot_index;
+            let query_distance = i - slot_index;
+            if actual_distance < query_distance {
+              return None;
+            } else if key == current_slot_key {
+              return Some(value);
+            }
+          }
+          None => return None,
+        }
+      }
+      None
+    } else {
+      let slot = self.slot(slot_index, key)?;
+      match slot {
+        Some(((_, ref v), _)) => Some(v),
+        None => None,
+      }
     }
   }
 
@@ -204,6 +234,7 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  extern crate test;
 
   #[test]
   fn basic_works() {
@@ -236,5 +267,26 @@ mod tests {
     assert_eq!(advanced.get(&"foo"), None);
     assert_eq!(removed, Some("lol"));
     assert_eq!(advanced.get(&"qux"), None);
+  }
+
+  use self::test::Bencher;
+  #[bench]
+  fn get_remove_insert(b: &mut Bencher) {
+    let mut m = Advanced::new();
+    // let mut m = std::collections::HashMap::new();
+
+    for i in 1..1001 {
+      m.insert(i, i);
+    }
+
+    let mut k = 1;
+
+    b.iter(|| {
+      m.get(&(k + 400));
+      m.get(&(k + 2000));
+      m.remove(&k);
+      m.insert(k + 1000, k + 1000);
+      k += 1;
+    })
   }
 }
