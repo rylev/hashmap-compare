@@ -105,12 +105,36 @@ impl<K: Hash + Eq, V> Advanced<K, V> {
     if self.should_resize && load_factor >= self.max_load_factor {
       self.resize();
     }
-    let slot_index = self.slot_index(&key);
-    let slot = self.slot_mut(slot_index, &key).unwrap();
-    let old = slot.replace(((key, value), slot_index));
+    let new_slot_index = self.slot_index(&key);
+    if cfg!(not(feature = "robin")) {
+      let slot = self.slot_mut(new_slot_index, &key).unwrap();
+      let old = slot.replace(((key, value), new_slot_index));
 
-    if old.is_none() {
-      self.item_count += 1;
+      if old.is_none() {
+        self.item_count += 1;
+      }
+    } else {
+      let mut current_slot = ((key, value), new_slot_index);
+      for (i, slot) in self.slots.iter_mut().enumerate().skip(new_slot_index) {
+        match slot {
+          Some(((k, _), slot_index)) => {
+            let current_distance = i - *slot_index;
+            let new_distance = i - current_slot.1;
+            let current_key = &(current_slot.0).0;
+            if current_key == k {
+              *slot = Some(current_slot);
+              return;
+            } else if current_distance < new_distance {
+              current_slot = slot.replace(current_slot).unwrap();
+            }
+          }
+          None => {
+            slot.replace(current_slot);
+            return;
+          }
+        }
+      }
+      self.slots.push(Some(current_slot));
     }
   }
 

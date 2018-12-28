@@ -5,3 +5,6 @@ authors = ["Ryan Levick <ryan.levick@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+
+[features]
+robin = []
